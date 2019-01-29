@@ -60,7 +60,7 @@ void x86_reg_reset(struct uc_struct *uc)
     CPUArchState *env = uc->cpu->env_ptr;
 
     env->features[FEAT_1_EDX] = CPUID_CX8 | CPUID_CMOV | CPUID_SSE2 | CPUID_FXSR | CPUID_SSE | CPUID_CLFLUSH;
-    env->features[FEAT_1_ECX] = CPUID_EXT_SSSE3 | CPUID_EXT_SSE41 | CPUID_EXT_SSE42 | CPUID_EXT_AES;
+    env->features[FEAT_1_ECX] = CPUID_EXT_SSSE3 | CPUID_EXT_SSE41 | CPUID_EXT_SSE42 | CPUID_EXT_AES | CPUID_EXT_CX16;
     env->features[FEAT_8000_0001_EDX] = CPUID_EXT2_3DNOW | CPUID_EXT2_RDTSCP;
     env->features[FEAT_8000_0001_ECX] = CPUID_EXT3_LAHF_LM | CPUID_EXT3_ABM | CPUID_EXT3_SKINIT | CPUID_EXT3_CR8LEG;
     env->features[FEAT_7_0_EBX] = CPUID_7_0_EBX_BMI1 | CPUID_7_0_EBX_BMI2 | CPUID_7_0_EBX_ADX | CPUID_7_0_EBX_SMAP;
@@ -156,6 +156,7 @@ void x86_reg_reset(struct uc_struct *uc)
         case UC_MODE_64:
             env->hflags |= HF_CS32_MASK | HF_SS32_MASK | HF_CS64_MASK | HF_LMA_MASK | HF_OSFXSR_MASK;
             env->hflags &= ~(HF_ADDSEG_MASK);
+            env->efer |= MSR_EFER_LMA | MSR_EFER_LME; // extended mode activated
             cpu_x86_update_cr0(env, CR0_PE_MASK); // protected mode
             break;
     }
@@ -971,7 +972,7 @@ int x86_reg_write(struct uc_struct *uc, unsigned int *regs, void *const *vals, i
                         uc_emu_stop(uc);
                         break;
                     case UC_X86_REG_IP:
-                        WRITE_WORD(X86_CPU(uc, mycpu)->env.eip, *(uint16_t *)value);
+                        X86_CPU(uc, mycpu)->env.eip = *(uint16_t *)value;
                         // force to quit execution and flush TB
                         uc->quit_request = true;
                         uc_emu_stop(uc);
@@ -1161,7 +1162,7 @@ int x86_reg_write(struct uc_struct *uc, unsigned int *regs, void *const *vals, i
                         uc_emu_stop(uc);
                         break;
                     case UC_X86_REG_EIP:
-                        WRITE_DWORD(X86_CPU(uc, mycpu)->env.eip, *(uint32_t *)value);
+                        X86_CPU(uc, mycpu)->env.eip = *(uint32_t *)value;
                         // force to quit execution and flush TB
                         uc->quit_request = true;
                         uc_emu_stop(uc);
@@ -1185,10 +1186,10 @@ int x86_reg_write(struct uc_struct *uc, unsigned int *regs, void *const *vals, i
                         X86_CPU(uc, mycpu)->env.segs[R_ES].selector = *(uint16_t *)value;
                         break;
                     case UC_X86_REG_FS:
-                        X86_CPU(uc, mycpu)->env.segs[R_FS].selector = *(uint16_t *)value;
+                        cpu_x86_load_seg(&X86_CPU(uc, mycpu)->env, R_FS, *(uint16_t *)value);
                         break;
                     case UC_X86_REG_GS:
-                        X86_CPU(uc, mycpu)->env.segs[R_GS].selector = *(uint16_t *)value;
+                        cpu_x86_load_seg(&X86_CPU(uc, mycpu)->env, R_GS, *(uint16_t *)value);
                         break;
                     case UC_X86_REG_R8:
                         X86_CPU(uc, mycpu)->env.regs[8] = *(uint64_t *)value;
@@ -1341,7 +1342,8 @@ static bool x86_insn_hook_validate(uint32_t insn_enum)
     //for x86 we can only hook IN, OUT, and SYSCALL
     if (insn_enum != UC_X86_INS_IN
         &&  insn_enum != UC_X86_INS_OUT
-        &&  insn_enum != UC_X86_INS_SYSCALL) {
+        &&  insn_enum != UC_X86_INS_SYSCALL
+        &&  insn_enum != UC_X86_INS_SYSENTER) {
         return false;
     }
     return true;
